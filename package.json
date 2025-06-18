@@ -1,7 +1,7 @@
 {
-  "name": "polkadot-unbonding-simulator",
-  "version": "1.0.0",
-  "description": "Interactive simulator for Polkadot's proposed unbonding queue mechanism",
+  "name": "polkadot-unbonding-simulator-improved",
+  "version": "2.0.0",
+  "description": "RFC-0097 compliant simulator for Polkadot's proposed unbonding queue mechanism",
   "main": "index.js",
   "scripts": {
     "dev": "vite",
@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0"
   },
-  "keywords": ["polkadot", "staking", "unbonding", "blockchain", "simulator"],
+  "keywords": ["polkadot", "staking", "unbonding", "blockchain", "simulator", "RFC-0097", "queue", "sequential"],
   "author": "Your Name",
   "license": "MIT",
   "dependencies": {
