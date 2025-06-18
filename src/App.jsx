@@ -107,7 +107,11 @@ const EraBasedUnbondingSimulator = () => {
       
       const maxUnstake = getMaxUnstakeForEra(era);
       if (total_unbond >= maxUnstake) {
-        return Math.max(0, era + networkParams.BONDING_DURATION - currentEra);
+        return Math.max(
+          0, 
+          unbonding_start_era + networkParams.MIN_UNBONDING_ERAS - currentEra,
+          era + networkParams.BONDING_DURATION - currentEra
+        );
       }
     }
     
