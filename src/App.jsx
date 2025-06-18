@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell, ScatterChart, Scatter, ComposedChart } from 'recharts';
+import Papa from 'papaparse';
 
 const EraBasedUnbondingSimulator = () => {
   // Network parameters
@@ -35,6 +36,10 @@ const EraBasedUnbondingSimulator = () => {
   const [newUnbondingAmount, setNewUnbondingAmount] = useState(10000);
   const [totalStakedDOT, setTotalStakedDOT] = useState(800_000_000);
   const [lowestThirdRatio, setLowestThirdRatio] = useState(0.287);
+  
+  // Empirical data state
+  const [empiricalData, setEmpiricalData] = useState([]);
+  const [showEmpiricalAnalysis, setShowEmpiricalAnalysis] = useState(false);
 
   // Calculate max unstake per era
   const getMaxUnstakeForEra = (era) => {
@@ -226,7 +231,65 @@ const EraBasedUnbondingSimulator = () => {
     });
   };
 
-  // Update era data when network parameters change
+  // Handle empirical data upload
+  const handleFileUpload = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    const text = await file.text();
+    const parsed = Papa.parse(text, {
+      header: true,
+      dynamicTyping: true,
+      skipEmptyLines: true
+    });
+    
+    // Process data and simulate RFC mechanism properly
+    const processedData = [];
+    const eraWindow = new Array(networkParams.BONDING_DURATION).fill(0); // 28-era sliding window
+    
+    parsed.data
+      .filter(row => row.date && row.total_stake && row.unbonded_amount)
+      .forEach((row, index) => {
+        // Calculate capacity for this era  
+        const capacity = (1 - networkParams.MIN_SLASHABLE_SHARE) * 
+                        (lowestThirdRatio * row.total_stake);
+        
+        // Add this unbonding to current era (index % 28)
+        const eraIndex = index % networkParams.BONDING_DURATION;
+        eraWindow[eraIndex] = row.unbonded_amount;
+        
+        // Simulate RFC withdrawal check
+        let total_unbond = 0;
+        let estimatedDuration = networkParams.MIN_UNBONDING_ERAS;
+        
+        // Check cumulative unbonding across eras (RFC algorithm)
+        for (let checkEra = 0; checkEra < networkParams.BONDING_DURATION; checkEra++) {
+          total_unbond += eraWindow[checkEra];
+          
+          if (total_unbond >= capacity) {
+            // Calculate remaining time based on when threshold exceeded
+            estimatedDuration = Math.max(
+              networkParams.MIN_UNBONDING_ERAS,
+              networkParams.BONDING_DURATION - checkEra
+            );
+            break;
+          }
+        }
+        
+        processedData.push({
+          ...row,
+          date: new Date(row.date).toISOString().split('T')[0],
+          capacity,
+          utilizationRatio: (row.unbonded_amount / capacity) * 100,
+          estimatedDuration: Math.round(estimatedDuration * 10) / 10,
+          cumulativeUnbond: total_unbond,
+          index
+        });
+      });
+    
+    setEmpiricalData(processedData);
+    setShowEmpiricalAnalysis(true);
+  };
   useEffect(() => {
     setEraData(prev => {
       const updatedEras = {};
@@ -401,8 +464,10 @@ const EraBasedUnbondingSimulator = () => {
         {unlockChunks.length === 0 ? (
           <p className="text-gray-500">No unbonding requests yet</p>
         ) : (
-          <div className="space-y-3">
-            {unlockChunks.map(chunk => {
+          <div className="h-64 overflow-y-auto space-y-3 pr-2">
+            {unlockChunks
+              .sort((a, b) => b.id - a.id) // Newest first
+              .map(chunk => {
               const withdrawCheck = canWithdraw(chunk);
               const estimatedWait = estimateUnbondingTime(chunk);
               
@@ -499,6 +564,127 @@ const EraBasedUnbondingSimulator = () => {
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* Empirical Data Analysis */}
+      <div className="bg-white border border-gray-200 rounded-lg p-6">
+        <h2 className="text-xl font-semibold mb-4">Empirical Data Analysis</h2>
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Upload Historical Unbonding Data (CSV)
+          </label>
+          <input
+            type="file"
+            accept=".csv"
+            onChange={handleFileUpload}
+            className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+          />
+          <div className="mt-1 text-sm text-gray-500">
+            Expected format: columns for date, total_stake, unbonded_amount
+          </div>
+        </div>
+        
+        {showEmpiricalAnalysis && empiricalData.length > 0 && (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              <div className="bg-blue-50 p-4 rounded">
+                <div className="text-sm text-blue-600">Total Events</div>
+                <div className="text-xl font-bold text-blue-900">{empiricalData.length}</div>
+              </div>
+              <div className="bg-green-50 p-4 rounded">
+                <div className="text-sm text-green-600">Avg Duration</div>
+                <div className="text-xl font-bold text-green-900">
+                  {(empiricalData.reduce((sum, d) => sum + d.estimatedDuration, 0) / empiricalData.length).toFixed(1)} eras
+                </div>
+              </div>
+              <div className="bg-purple-50 p-4 rounded">
+                <div className="text-sm text-purple-600">Max Unbond</div>
+                <div className="text-xl font-bold text-purple-900">
+                  {formatAmount(Math.max(...empiricalData.map(d => d.unbonded_amount)))} DOT
+                </div>
+              </div>
+            </div>
+
+            {/* Combined Duration and Amount Chart */}
+            <div className="mb-6">
+              <h3 className="text-lg font-semibold mb-3">Unbond Duration vs Amount Over Time</h3>
+              <div className="h-80">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={empiricalData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis 
+                      dataKey="date" 
+                      tick={{ fontSize: 10 }}
+                      interval="preserveStartEnd"
+                    />
+                    <YAxis 
+                      yAxisId="duration"
+                      label={{ value: 'Duration (eras)', angle: -90, position: 'insideLeft' }}
+                      domain={[0, 28]}
+                    />
+                    <YAxis 
+                      yAxisId="amount"
+                      orientation="right"
+                      label={{ value: 'Unbond Amount (DOT)', angle: 90, position: 'insideRight' }}
+                      tickFormatter={(value) => formatAmount(value)}
+                    />
+                    <Tooltip 
+                      labelFormatter={(date) => `Date: ${date}`}
+                      formatter={(value, name) => {
+                        if (name === 'estimatedDuration') return [`${value} eras`, 'Duration'];
+                        if (name === 'unbonded_amount') return [formatAmount(value), 'Amount'];
+                        return [value, name];
+                      }}
+                    />
+                    <Bar 
+                      yAxisId="amount"
+                      dataKey="unbonded_amount" 
+                      fill="#dc2626" 
+                      fillOpacity={0.6}
+                    />
+                    <Line 
+                      yAxisId="duration"
+                      type="monotone" 
+                      dataKey="estimatedDuration" 
+                      stroke="#2563eb" 
+                      strokeWidth={3}
+                      dot={{ r: 3 }}
+                    />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* Utilization Chart */}
+            <div>
+              <h3 className="text-lg font-semibold mb-3">Queue Utilization Over Time</h3>
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={empiricalData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis 
+                      dataKey="date" 
+                      tick={{ fontSize: 10 }}
+                      interval="preserveStartEnd"
+                    />
+                    <YAxis label={{ value: 'Utilization (%)', angle: -90, position: 'insideLeft' }} />
+                    <Tooltip 
+                      labelFormatter={(date) => `Date: ${date}`}
+                      formatter={(value) => [`${value.toFixed(2)}%`, 'Utilization']}
+                    />
+                    <Line 
+                      type="monotone" 
+                      dataKey="utilizationRatio" 
+                      stroke="#dc2626" 
+                      strokeWidth={2}
+                      dot={{ r: 2 }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Implementation Notes */}

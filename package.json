@@ -9,10 +9,20 @@
     "preview": "vite preview",
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0"
   },
-  "keywords": ["polkadot", "staking", "unbonding", "blockchain", "simulator", "RFC-0097", "queue", "sequential"],
+  "keywords": [
+    "polkadot",
+    "staking",
+    "unbonding",
+    "blockchain",
+    "simulator",
+    "RFC-0097",
+    "queue",
+    "sequential"
+  ],
   "author": "Your Name",
   "license": "MIT",
   "dependencies": {
+    "papaparse": "^5.5.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "recharts": "^2.8.0"
