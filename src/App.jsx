@@ -29,10 +29,16 @@ const ImprovedUnbondingSimulator = () => {
   const [newUnbondingAmount, setNewUnbondingAmount] = useState(10000);
   const [selectedRequestId, setSelectedRequestId] = useState(null);
   const [timeSimulation, setTimeSimulation] = useState(0); // Days passed
+  
+  // Network configuration state
+  const [totalStakedDOT, setTotalStakedDOT] = useState(800_000_000);
+  const [lowestThirdRatio, setLowestThirdRatio] = useState(0.287);
+  const [minSlashableShare, setMinSlashableShare] = useState(0.5);
 
-  // Calculate max_unstake based on current parameters
-  const max_unstake = networkParams.MIN_SLASHABLE_SHARE * 
-                     (networkParams.LOWEST_THIRD_RATIO * networkParams.TOTAL_STAKE_ESTIMATE);
+  // Calculate max_unstake based on current parameters (now dynamic)
+  const max_unstake = minSlashableShare * (lowestThirdRatio * totalStakedDOT);
+  const lowest_third_stake = lowestThirdRatio * totalStakedDOT;
+  const remaining_slashable = lowest_third_stake - max_unstake;
 
   // Core RFC mechanism implementation
   const calculateUnbondingRequest = useCallback((amount, currentQueueBlock, currentBlock) => {
@@ -207,10 +213,10 @@ const ImprovedUnbondingSimulator = () => {
     <div className="max-w-7xl mx-auto p-6 space-y-8">
       <div className="text-center">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">
-          RFC-0097 Unbonding Queue: Accurate Implementation
+          RFC-0097 Unbonding Queue: Interactive Configuration
         </h1>
         <p className="text-gray-600 mb-4">
-          Proper sequential queue model with rebonding, time progression, and splitting benefits
+          Explore how total staked DOT affects unbonding capacity in the proposed mechanism
         </p>
         
         {/* Network selector */}
@@ -227,6 +233,91 @@ const ImprovedUnbondingSimulator = () => {
           >
             Kusama (7 days)
           </button>
+        </div>
+      </div>
+
+      {/* Network Configuration */}
+      <div className="bg-white border border-gray-200 rounded-lg p-6">
+        <h2 className="text-xl font-semibold mb-4">Network Configuration</h2>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Total Staked DOT
+            </label>
+            <input
+              type="number"
+              value={totalStakedDOT}
+              onChange={(e) => setTotalStakedDOT(Math.max(100_000_000, parseFloat(e.target.value) || 800_000_000))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              min="100000000"
+              step="50000000"
+            />
+            <div className="mt-1 text-sm text-gray-500">
+              Current: {formatAmount(totalStakedDOT)} DOT
+            </div>
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Lowest Third Ratio
+            </label>
+            <input
+              type="number"
+              value={lowestThirdRatio}
+              onChange={(e) => setLowestThirdRatio(Math.max(0.1, Math.min(0.5, parseFloat(e.target.value) || 0.287)))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              min="0.1"
+              max="0.5"
+              step="0.01"
+            />
+            <div className="mt-1 text-sm text-gray-500">
+              {(lowestThirdRatio * 100).toFixed(1)}% of total stake
+            </div>
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Min Slashable Share
+            </label>
+            <input
+              type="number"
+              value={minSlashableShare}
+              onChange={(e) => setMinSlashableShare(Math.max(0.1, Math.min(1.0, parseFloat(e.target.value) || 0.5)))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              min="0.1"
+              max="1.0"
+              step="0.05"
+            />
+            <div className="mt-1 text-sm text-gray-500">
+              {(minSlashableShare * 100).toFixed(0)}% can unbond quickly
+            </div>
+          </div>
+        </div>
+        
+        {/* Capacity Calculation Breakdown */}
+        <div className="mt-6 p-4 bg-gray-50 rounded-lg">
+          <h3 className="text-lg font-semibold text-gray-900 mb-3">Capacity Calculation Breakdown</h3>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
+            <div>
+              <div className="text-gray-600">Total Staked</div>
+              <div className="font-semibold">{formatAmount(totalStakedDOT)} DOT</div>
+            </div>
+            <div>
+              <div className="text-gray-600">Lowest Third Stake</div>
+              <div className="font-semibold">{formatAmount(lowest_third_stake)} DOT</div>
+              <div className="text-xs text-gray-500">({(lowestThirdRatio * 100).toFixed(1)}% of total)</div>
+            </div>
+            <div>
+              <div className="text-green-600">Fast Unbond Capacity</div>
+              <div className="font-semibold text-green-700">{formatAmount(max_unstake)} DOT</div>
+              <div className="text-xs text-gray-500">({(minSlashableShare * 100).toFixed(0)}% of lowest third)</div>
+            </div>
+            <div>
+              <div className="text-red-600">Reserved for Slashing</div>
+              <div className="font-semibold text-red-700">{formatAmount(remaining_slashable)} DOT</div>
+              <div className="text-xs text-gray-500">(LRA protection)</div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -357,6 +448,45 @@ const ImprovedUnbondingSimulator = () => {
         )}
       </div>
 
+      {/* Network Scenarios */}
+      <div className="bg-white border border-gray-200 rounded-lg p-6">
+        <h2 className="text-xl font-semibold mb-4">Network Scenarios</h2>
+        <p className="text-gray-600 mb-4">
+          See how different total staking amounts affect unbonding capacity. Click to apply:
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {[
+            { name: "Bear Market", total: 500_000_000, desc: "Low participation" },
+            { name: "Current Est.", total: 800_000_000, desc: "RFC baseline" },
+            { name: "Bull Market", total: 1_200_000_000, desc: "High participation" },
+            { name: "Maximum", total: 1_500_000_000, desc: "Peak staking" }
+          ].map((scenario, idx) => {
+            const scenarioCapacity = minSlashableShare * (lowestThirdRatio * scenario.total);
+            const isActive = totalStakedDOT === scenario.total;
+            return (
+              <button
+                key={idx}
+                onClick={() => setTotalStakedDOT(scenario.total)}
+                className={`p-4 border rounded-lg text-left transition-colors ${
+                  isActive 
+                    ? 'border-blue-500 bg-blue-50' 
+                    : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                }`}
+              >
+                <div className="font-medium text-gray-900">{scenario.name}</div>
+                <div className="text-sm text-gray-600">{scenario.desc}</div>
+                <div className="mt-2">
+                  <div className="text-xs text-gray-500">Total: {formatAmount(scenario.total)} DOT</div>
+                  <div className="text-sm font-semibold text-green-600">
+                    Capacity: {formatAmount(scenarioCapacity)} DOT
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Splitting Benefit Demonstration */}
       <div className="bg-white border border-gray-200 rounded-lg p-6">
         <h2 className="text-xl font-semibold mb-4">Benefits of Splitting Large Stakes</h2>
@@ -412,6 +542,18 @@ const ImprovedUnbondingSimulator = () => {
           <li>• <strong>Dynamic Parameters:</strong> max_unstake should update every era based on actual validator backing</li>
           <li>• <strong>Time Progression:</strong> Queue naturally empties as time passes and tokens are released</li>
         </ul>
+        
+        <div className="mt-4 p-3 bg-yellow-100 rounded border-l-4 border-yellow-400">
+          <h3 className="font-semibold text-yellow-900 mb-2">Educational Configuration</h3>
+          <p className="text-yellow-800 text-sm">
+            The network configuration controls above are for educational purposes. In production:
+          </p>
+          <ul className="mt-2 text-yellow-800 text-sm space-y-1">
+            <li>• <strong>Total Staked DOT:</strong> Determined by actual network participation</li>
+            <li>• <strong>Lowest Third Ratio:</strong> Calculated as minimum over last 28 eras (~{(lowestThirdRatio * 100).toFixed(1)}% empirically)</li>
+            <li>• <strong>Slashable Share:</strong> Governance parameter balancing UX vs security ({(minSlashableShare * 100).toFixed(0)}% proposed)</li>
+          </ul>
+        </div>
       </div>
     </div>
   );
