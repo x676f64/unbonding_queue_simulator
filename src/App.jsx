@@ -47,7 +47,7 @@ const EraBasedUnbondingSimulator = () => {
     return (1 - networkParams.MIN_SLASHABLE_SHARE) * lowestThirdStake;
   };
 
-  // Core RFC withdrawal check implementation
+  // Core RFC withdrawal check implementation (R-style algorithm)
   const canWithdraw = useCallback((chunk) => {
     const { unbonding_amount, unbonding_start_era, previous_unbonded_stake_in_era } = chunk;
     
@@ -56,94 +56,147 @@ const EraBasedUnbondingSimulator = () => {
       return { canWithdraw: false, reason: `Must wait ${networkParams.MIN_UNBONDING_ERAS} eras minimum` };
     }
 
-    // Check if within bonding duration window
-    if (unbonding_start_era >= currentEra - (networkParams.BONDING_DURATION - 1)) {
-      let total_unbond = 0;
+    // If chunk started before our era window, can withdraw
+    if (unbonding_start_era < currentEra - (networkParams.BONDING_DURATION - 1)) {
+      return { canWithdraw: true, reason: 'Outside bonding duration window' };
+    }
+
+    let e = 0; // Count of eras that pass threshold test
+    
+    // Backward scan through window_size eras (R algorithm)
+    for (let k = 1; k <= networkParams.BONDING_DURATION; k++) {
+      const lookbackEra = currentEra - k + 1;
+      if (lookbackEra < unbonding_start_era) break;
       
-      // Iterate through eras as per RFC algorithm
-      for (let era = unbonding_start_era; era >= currentEra - (networkParams.BONDING_DURATION - 1); era--) {
+      // Sum unbonding from lookbackEra through currentEra (inclusive)
+      let sumWindow = 0;
+      for (let era = lookbackEra; era <= currentEra; era++) {
         if (era === unbonding_start_era) {
-          // Special case for the starting era
-          total_unbond = Math.min(
+          // For starting era, use the chunk's snapshot of previous unbonded + this chunk
+          sumWindow += Math.min(
             eraData[era]?.total_unbond_in_era || 0,
             previous_unbonded_stake_in_era + unbonding_amount
           );
         } else {
-          total_unbond += eraData[era]?.total_unbond_in_era || 0;
+          sumWindow += eraData[era]?.total_unbond_in_era || 0;
         }
-        
-        // Check threshold for this era
-        const maxUnstake = getMaxUnstakeForEra(era);
-        if (total_unbond >= maxUnstake) {
-          const remainingEras = Math.max(0, era + networkParams.BONDING_DURATION - currentEra);
-          return { 
-            canWithdraw: false, 
-            reason: `Threshold exceeded in era ${era}`,
-            estimatedErasRemaining: remainingEras
-          };
-        }
+      }
+      
+      // Use threshold for the lookback era
+      const historicalThreshold = (1 - networkParams.MIN_SLASHABLE_SHARE) * 
+                                  (eraData[lookbackEra]?.lowest_third_stake || 0);
+      
+      if (sumWindow <= historicalThreshold) {
+        e++;
+      } else {
+        // Threshold exceeded - calculate remaining time
+        const remainingEras = Math.max(
+          0,
+          networkParams.BONDING_DURATION - e,
+          networkParams.MIN_UNBONDING_ERAS,
+          unbonding_start_era + networkParams.MIN_UNBONDING_ERAS - currentEra
+        );
+        return { 
+          canWithdraw: false, 
+          reason: `Threshold exceeded at era ${lookbackEra}`,
+          estimatedErasRemaining: remainingEras
+        };
       }
     }
 
-    return { canWithdraw: true, reason: 'All checks passed' };
-  }, [currentEra, eraData, networkParams, getMaxUnstakeForEra]);
+    return { canWithdraw: true, reason: 'All threshold checks passed' };
+  }, [currentEra, eraData, networkParams]);
 
-  // Estimate unbonding time for existing chunk
+  // Estimate unbonding time for existing chunk (R-style algorithm)
   const estimateUnbondingTime = useCallback((chunk) => {
     const { unbonding_amount, unbonding_start_era, previous_unbonded_stake_in_era } = chunk;
     
-    // If outside bonding duration window, can withdraw immediately
+    // If chunk started before our era window, can withdraw after minimum delay
     if (unbonding_start_era < currentEra - (networkParams.BONDING_DURATION - 1)) {
-      return 0;
+      return Math.max(0, unbonding_start_era + networkParams.MIN_UNBONDING_ERAS - currentEra);
     }
-
-    let total_unbond = 0;
     
-    // Iterate through eras to find when withdrawal becomes possible
-    for (let era = unbonding_start_era; era >= currentEra - (networkParams.BONDING_DURATION - 1); era--) {
-      if (era === unbonding_start_era) {
-        total_unbond = Math.min(
-          eraData[era]?.total_unbond_in_era || 0,
-          previous_unbonded_stake_in_era + unbonding_amount
-        );
-      } else {
-        total_unbond += eraData[era]?.total_unbond_in_era || 0;
+    let e = 0; // Count of eras that pass threshold test
+    
+    // Backward scan through window_size eras (R algorithm)
+    for (let k = 1; k <= networkParams.BONDING_DURATION; k++) {
+      const lookbackEra = currentEra - k + 1;
+      if (lookbackEra < unbonding_start_era) break;
+      
+      // Sum unbonding from lookbackEra through currentEra (inclusive)
+      let sumWindow = 0;
+      for (let era = lookbackEra; era <= currentEra; era++) {
+        if (era === unbonding_start_era) {
+          // For starting era, use the chunk's snapshot of previous unbonded + this chunk
+          sumWindow += Math.min(
+            eraData[era]?.total_unbond_in_era || 0,
+            previous_unbonded_stake_in_era + unbonding_amount
+          );
+        } else {
+          sumWindow += eraData[era]?.total_unbond_in_era || 0;
+        }
       }
       
-      const maxUnstake = getMaxUnstakeForEra(era);
-      if (total_unbond >= maxUnstake) {
-        return Math.max(
-          0, 
-          unbonding_start_era + networkParams.MIN_UNBONDING_ERAS - currentEra,
-          era + networkParams.BONDING_DURATION - currentEra
-        );
+      // Use threshold for the lookback era
+      const historicalThreshold = (1 - networkParams.MIN_SLASHABLE_SHARE) * 
+                                  (eraData[lookbackEra]?.lowest_third_stake || 0);
+      
+      if (sumWindow <= historicalThreshold) {
+        e++;
+      } else {
+        break;
       }
     }
     
-    return Math.max(0, unbonding_start_era + networkParams.MIN_UNBONDING_ERAS - currentEra);
-  }, [currentEra, eraData, networkParams, getMaxUnstakeForEra]);
+    // Duration calculation: window_size - e, with minimum delay
+    return Math.max(
+      networkParams.BONDING_DURATION - e, 
+      networkParams.MIN_UNBONDING_ERAS,
+      unbonding_start_era + networkParams.MIN_UNBONDING_ERAS - currentEra
+    );
+  }, [currentEra, eraData, networkParams]);
 
-  // Estimate unbonding time for prospective unbonder
+  // Estimate unbonding time for prospective unbonder (R-style algorithm)
   const estimateNewUnbondingTime = useCallback((unbond_amount) => {
-    const unbonding_start_era = currentEra;
+    const currentEraIndex = currentEra;
     
-    let total_unbond = 0;
+    // Create a temporary era array for simulation
+    const tempEraData = {...eraData};
+    tempEraData[currentEra] = {
+      ...tempEraData[currentEra],
+      total_unbond_in_era: (tempEraData[currentEra]?.total_unbond_in_era || 0) + unbond_amount
+    };
     
-    for (let era = unbonding_start_era; era >= currentEra - (networkParams.BONDING_DURATION - 1); era--) {
-      if (era === unbonding_start_era) {
-        total_unbond = (eraData[era]?.total_unbond_in_era || 0) + unbond_amount;
-      } else {
-        total_unbond += eraData[era]?.total_unbond_in_era || 0;
+    let e = 0; // Count of eras that pass threshold test
+    
+    // Backward scan through window_size eras (R algorithm)
+    for (let k = 1; k <= networkParams.BONDING_DURATION; k++) {
+      const lookbackEra = currentEra - k + 1;
+      if (lookbackEra < 0) break;
+      
+      // Sum unbonding from lookbackEra through currentEra (inclusive)
+      let sumWindow = 0;
+      for (let era = lookbackEra; era <= currentEra; era++) {
+        sumWindow += tempEraData[era]?.total_unbond_in_era || 0;
       }
       
-      const maxUnstake = getMaxUnstakeForEra(era);
-      if (total_unbond >= maxUnstake) {
-        return Math.max(0, era + networkParams.BONDING_DURATION - currentEra);
+      // Use threshold for the lookback era
+      const historicalThreshold = (1 - networkParams.MIN_SLASHABLE_SHARE) * 
+                                  (tempEraData[lookbackEra]?.lowest_third_stake || 0);
+      
+      if (sumWindow <= historicalThreshold) {
+        e++;
+      } else {
+        break;
       }
     }
     
-    return networkParams.MIN_UNBONDING_ERAS;
-  }, [currentEra, eraData, networkParams, getMaxUnstakeForEra]);
+    // Duration calculation: window_size - e, with minimum delay
+    return Math.max(
+      networkParams.BONDING_DURATION - e, 
+      networkParams.MIN_UNBONDING_ERAS
+    );
+  }, [currentEra, eraData, networkParams]);
 
   // Add new unbonding request
   const addUnbondingRequest = () => {
