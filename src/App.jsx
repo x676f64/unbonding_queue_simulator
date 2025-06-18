@@ -202,22 +202,26 @@ const EraBasedUnbondingSimulator = () => {
     setCurrentEra(newEra);
     setTimeAdvanced(prev => prev + eras);
     
-    // Update era data - shift window and add new eras
+    // Update era data - maintain sliding window of last 28 eras
     setEraData(prev => {
       const newEraData = {};
-      for (let i = 0; i < networkParams.BONDING_DURATION; i++) {
-        const eraIndex = newEra - (networkParams.BONDING_DURATION - 1) + i;
-        if (prev[eraIndex - eras]) {
-          // Copy existing era data
-          newEraData[eraIndex] = prev[eraIndex - eras];
+      
+      // Calculate the new era range: [newEra - 27, newEra]
+      const oldestEra = newEra - (networkParams.BONDING_DURATION - 1);
+      
+      for (let era = oldestEra; era <= newEra; era++) {
+        if (prev[era]) {
+          // Keep existing era data
+          newEraData[era] = prev[era];
         } else {
           // Create new era with default values
-          newEraData[eraIndex] = {
+          newEraData[era] = {
             lowest_third_stake: lowestThirdRatio * totalStakedDOT,
             total_unbond_in_era: 0,
           };
         }
       }
+      
       return newEraData;
     });
   };
@@ -265,22 +269,6 @@ const EraBasedUnbondingSimulator = () => {
         <p className="text-gray-600 mb-4">
           Updated implementation with per-era tracking and withdrawal checks
         </p>
-        
-        {/* Network selector */}
-        <div className="flex justify-center gap-4 mb-6">
-          <button 
-            onClick={() => setNetworkParams(prev => ({...prev, name: 'Polkadot', BONDING_DURATION: 28}))}
-            className={`px-4 py-2 rounded ${networkParams.name === 'Polkadot' ? 'bg-pink-500 text-white' : 'bg-gray-200'}`}
-          >
-            Polkadot (28 eras)
-          </button>
-          <button 
-            onClick={() => setNetworkParams(prev => ({...prev, name: 'Kusama', BONDING_DURATION: 7}))}
-            className={`px-4 py-2 rounded ${networkParams.name === 'Kusama' ? 'bg-yellow-500 text-white' : 'bg-gray-200'}`}
-          >
-            Kusama (7 eras)
-          </button>
-        </div>
       </div>
 
       {/* Era Status */}
