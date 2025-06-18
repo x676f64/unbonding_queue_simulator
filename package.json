@@ -1,5 +1,5 @@
 {
-  "name": "polkadot-unbonding-simulator-improved",
+  "name": "polkadot-unbonding-simulator",
   "version": "2.0.0",
   "description": "RFC-0097 compliant simulator for Polkadot's proposed unbonding queue mechanism",
   "main": "index.js",

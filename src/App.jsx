@@ -243,49 +243,66 @@ const EraBasedUnbondingSimulator = () => {
       skipEmptyLines: true
     });
     
-    // Process data and simulate RFC mechanism properly
+    const filteredData = parsed.data.filter(row => row.date && row.total_stake && row.unbonded_amount);
     const processedData = [];
-    const eraWindow = new Array(networkParams.BONDING_DURATION).fill(0); // 28-era sliding window
     
-    parsed.data
-      .filter(row => row.date && row.total_stake && row.unbonded_amount)
-      .forEach((row, index) => {
-        // Calculate capacity for this era  
-        const capacity = (1 - networkParams.MIN_SLASHABLE_SHARE) * 
-                        (lowestThirdRatio * row.total_stake);
-        
-        // Add this unbonding to current era (index % 28)
-        const eraIndex = index % networkParams.BONDING_DURATION;
-        eraWindow[eraIndex] = row.unbonded_amount;
-        
-        // Simulate RFC withdrawal check
-        let total_unbond = 0;
-        let estimatedDuration = networkParams.MIN_UNBONDING_ERAS;
-        
-        // Check cumulative unbonding across eras (RFC algorithm)
-        for (let checkEra = 0; checkEra < networkParams.BONDING_DURATION; checkEra++) {
-          total_unbond += eraWindow[checkEra];
-          
-          if (total_unbond >= capacity) {
-            // Calculate remaining time based on when threshold exceeded
-            estimatedDuration = Math.max(
-              networkParams.MIN_UNBONDING_ERAS,
-              networkParams.BONDING_DURATION - checkEra
-            );
-            break;
-          }
-        }
-        
+    // R-style algorithm implementation
+    filteredData.forEach((row, index) => {
+      const amount = row.unbonded_amount;
+      const maxStake = (1 - networkParams.MIN_SLASHABLE_SHARE) * (lowestThirdRatio * row.total_stake);
+      
+      // Need at least 29 days to get one full 28-day history + 1 simulation point
+      if (index < networkParams.BONDING_DURATION) {
         processedData.push({
           ...row,
           date: new Date(row.date).toISOString().split('T')[0],
-          capacity,
-          utilizationRatio: (row.unbonded_amount / capacity) * 100,
-          estimatedDuration: Math.round(estimatedDuration * 10) / 10,
-          cumulativeUnbond: total_unbond,
-          index
+          estimatedDuration: null,
+          capacity: maxStake,
+          utilizationRatio: null,
+          hasFullHistory: false
         });
+        return;
+      }
+
+      let e = 0; // Count of eras that pass threshold test
+      
+      // Backward scan through window_size eras (R algorithm)
+      for (let k = 1; k <= networkParams.BONDING_DURATION; k++) {
+        const lookbackIndex = index - k + 1;
+        if (lookbackIndex < 0) break;
+        
+        // Sum unbonding from lookbackIndex through current index (inclusive)
+        const sumWindow = filteredData
+          .slice(lookbackIndex, index + 1)
+          .reduce((sum, d) => sum + (d.unbonded_amount || 0), 0);
+        
+        // Use historical max_stake for the lookback era
+        const historicalMaxStake = (1 - networkParams.MIN_SLASHABLE_SHARE) * 
+                                   (lowestThirdRatio * filteredData[lookbackIndex].total_stake);
+        
+        if (sumWindow <= historicalMaxStake) {
+          e++;
+        } else {
+          break;
+        }
+      }
+      
+      // Duration calculation: window_size - e, with minimum delay
+      const duration = Math.max(
+        networkParams.BONDING_DURATION - e, 
+        networkParams.MIN_UNBONDING_ERAS
+      );
+      
+      processedData.push({
+        ...row,
+        date: new Date(row.date).toISOString().split('T')[0],
+        capacity: maxStake,
+        utilizationRatio: (amount / maxStake) * 100,
+        estimatedDuration: duration,
+        hasFullHistory: true,
+        erasPassed: e
       });
+    });
     
     setEmpiricalData(processedData);
     setShowEmpiricalAnalysis(true);
@@ -586,31 +603,37 @@ const EraBasedUnbondingSimulator = () => {
         
         {showEmpiricalAnalysis && empiricalData.length > 0 && (
           <>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-              <div className="bg-blue-50 p-4 rounded">
-                <div className="text-sm text-blue-600">Total Events</div>
-                <div className="text-xl font-bold text-blue-900">{empiricalData.length}</div>
-              </div>
-              <div className="bg-green-50 p-4 rounded">
-                <div className="text-sm text-green-600">Avg Duration</div>
-                <div className="text-xl font-bold text-green-900">
-                  {(empiricalData.reduce((sum, d) => sum + d.estimatedDuration, 0) / empiricalData.length).toFixed(1)} eras
+            {(() => {
+              const validData = empiricalData.filter(d => d.hasFullHistory);
+              return (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                  <div className="bg-blue-50 p-4 rounded">
+                    <div className="text-sm text-blue-600">Valid Events</div>
+                    <div className="text-xl font-bold text-blue-900">{validData.length}</div>
+                    <div className="text-xs text-blue-500">({empiricalData.length - validData.length} skipped)</div>
+                  </div>
+                  <div className="bg-green-50 p-4 rounded">
+                    <div className="text-sm text-green-600">Avg Duration</div>
+                    <div className="text-xl font-bold text-green-900">
+                      {validData.length > 0 ? (validData.reduce((sum, d) => sum + d.estimatedDuration, 0) / validData.length).toFixed(1) : 'N/A'} eras
+                    </div>
+                  </div>
+                  <div className="bg-purple-50 p-4 rounded">
+                    <div className="text-sm text-purple-600">Max Unbond</div>
+                    <div className="text-xl font-bold text-purple-900">
+                      {validData.length > 0 ? formatAmount(Math.max(...validData.map(d => d.unbonded_amount))) : 'N/A'} DOT
+                    </div>
+                  </div>
                 </div>
-              </div>
-              <div className="bg-purple-50 p-4 rounded">
-                <div className="text-sm text-purple-600">Max Unbond</div>
-                <div className="text-xl font-bold text-purple-900">
-                  {formatAmount(Math.max(...empiricalData.map(d => d.unbonded_amount)))} DOT
-                </div>
-              </div>
-            </div>
+              );
+            })()}
 
             {/* Combined Duration and Amount Chart */}
             <div className="mb-6">
               <h3 className="text-lg font-semibold mb-3">Unbond Duration vs Amount Over Time</h3>
               <div className="h-80">
                 <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart data={empiricalData}>
+                  <ComposedChart data={empiricalData.filter(d => d.hasFullHistory)}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis 
                       dataKey="date" 
@@ -660,7 +683,7 @@ const EraBasedUnbondingSimulator = () => {
               <h3 className="text-lg font-semibold mb-3">Queue Utilization Over Time</h3>
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={empiricalData}>
+                  <LineChart data={empiricalData.filter(d => d.hasFullHistory)}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis 
                       dataKey="date" 
