@@ -1,57 +1,90 @@
-# Polkadot Unbonding Queue Simulator
+# RFC-0097 Era-Based Unbonding Simulator
 
-An interactive web application that models the proposed dynamic unbonding mechanism from Polkadot RFC-0097.
+Interactive simulator for Polkadot's proposed era-based unbonding queue mechanism.
 
-## Overview
+## RFC References
 
-This simulator allows users to explore how the new unbonding queue mechanism would work, showing how unbonding times scale from a minimum of 2 days to a maximum of 28 days based on the amount being unbonded and current queue conditions.
+- **Original RFC**: [RFC-0097: Unbonding Queue](https://polkadot-fellows.github.io/RFCs/approved/0097-unbonding_queue.html)
+- **Updated Implementation**: [Era-Based Specification](https://hackmd.io/@vKfUEAWlRR2Ogaq8nYYknw/SyfioMGWgl)
+
+## Implementation
+
+### Era-Based Storage
+- `lowest_third_stake[era]` and `total_unbond_in_era[era]` for last 28 eras
+- UnlockChunk format: `(unbonding_amount, unbonding_start_era, previous_unbonded_stake_in_era)`
+- Per-era threshold validation instead of global queue
+
+### RFC-Compliant Algorithms
+
+**Withdrawal Check:**
+```
+if current_era < unbonding_start_era + 2: fail
+for era from unbonding_start_era to current_era-27:
+    if total_unbond >= (1-MIN_SLASHABLE_SHARE) * lowest_third_stake[era]: fail
+```
+
+**Time Estimation:**
+```
+return max(0, unbonding_start_era+2-current_era, era+28-current_era)
+```
+
+**Rebonding:** Updates `total_unbond_in_era` for affected eras
+
+### Network Parameters
+- **Polkadot**: 28 eras (~28 days), 1 era/day
+- **Kusama**: 7 eras (~7 days), 4 eras/day  
+- **MIN_SLASHABLE_SHARE**: 0.5 (50% can unbond quickly)
+- **MIN_UNBONDING_ERAS**: 2 (minimum wait time)
 
 ## Features
 
-- **Interactive Calculator**: Input any unbonding amount and see estimated wait times
-- **Real-time Visualization**: Charts showing how unbonding time scales with amount
-- **Scenario Analysis**: Pre-configured examples for different user types
-- **Queue Simulation**: Adjust current queue conditions to see their impact
+### Interactive Controls
+- Create/rebond UnlockChunks with real-time validation
+- Era advancement to simulate time progression
+- Dynamic network parameter adjustment
+- Withdrawal eligibility checking
 
-## Key Parameters
+### Visualization
+- Era data table (capacity vs utilization)
+- UnlockChunk status and time estimates
+- Network scenario presets
+- Real-time threshold calculations
 
-- **Min Unbonding Time**: 2 days
-- **Max Unbonding Time**: 28 days (never worse than current system)
-- **Queue Capacity**: ~115M DOT can be unbonded at minimum time
-- **Average Expected Time**: ~2.67 days (from RFC empirical analysis)
+### Educational Value
+- Demonstrates era-based vs simple queue security models
+- Shows impact of historical unbonding on current requests
+- Explains minimum wait time requirements
+- Illustrates network participation effects on capacity
 
-## Getting Started
-
-### Prerequisites
-
-- Node.js (v18 or higher)
-- pnpm
-
-### Installation
+## Usage
 
 ```bash
-# Install dependencies
 pnpm install
-
-# Start development server
 pnpm dev
-
-# Build for production
-pnpm build
 ```
 
-## Deployment
+## Key Differences from Original RFC
 
-This project is configured for easy deployment on Vercel:
+| Aspect | Original (Sequential) | Updated (Era-Based) |
+|--------|----------------------|---------------------|
+| Storage | Global queue state | Per-era tracking |
+| Logic | Simple queue math | Complex era iteration |
+| Security | Fixed capacity | Dynamic era thresholds |
+| Predictability | High | Context-dependent |
 
-1. Push to GitHub
-2. Connect repository to Vercel
-3. Vercel will automatically detect the configuration and deploy
+## Technical Details
 
-## Based on RFC-0097
+**Capacity Calculation:**
+```
+max_unstake[era] = (1 - MIN_SLASHABLE_SHARE) * lowest_third_stake[era]
+```
 
-This simulator is based on the specifications outlined in Polkadot RFC-0097: "Unbonding Queue" by Jonas Gehrlein & Alistair Stewart.
+**Security Model:**
+- Prevents more than 50% of lowest-third validator stake from unbonding quickly
+- Maintains sufficient stake for Long Range Attack protection
+- Adapts to changing validator sets per era
 
-## License
-
-MIT
+**Complexity:**
+- O(28) era iteration for withdrawal checks
+- Dynamic thresholds based on historical data
+- Sophisticated rebonding effects on queue state
